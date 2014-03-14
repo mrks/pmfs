@@ -643,10 +643,16 @@ static int pmfs_xip_file_hpage_fault(struct vm_area_struct *vma,
 
 static const struct vm_operations_struct pmfs_xip_vm_ops = {
 	.fault	= pmfs_xip_file_fault,
+	#ifdef CONFIG_HAVE_IOREMAP_PROT
+	.access = generic_access_phys,
+	#endif
 };
 
 static const struct vm_operations_struct pmfs_xip_hpage_vm_ops = {
 	.fault	= pmfs_xip_file_hpage_fault,
+	#ifdef CONFIG_HAVE_IOREMAP_PROT
+	.access = generic_access_phys,
+	#endif
 };
 
 static inline int pmfs_has_huge_mmap(struct super_block *sb)
@@ -664,7 +670,7 @@ int pmfs_xip_file_mmap(struct file *file, struct vm_area_struct *vma)
 
 	file_accessed(file);
 
-	vma->vm_flags |= VM_MIXEDMAP;
+	vma->vm_flags |= (VM_MIXEDMAP | VM_IO);
 
 	block_sz = pmfs_data_block_size(vma, vma->vm_start, 0);
 	if (pmfs_has_huge_mmap(file->f_mapping->host->i_sb) &&
