@@ -90,17 +90,26 @@ static inline int pmfs_has_huge_ioremap(struct super_block *sb)
 	return sbi->s_mount_opt & PMFS_MOUNT_HUGEIOREMAP;
 }
 
+static inline int pmfs_is_pat_wc(struct super_block *sb)
+{
+	struct pmfs_sb_info *sbi = (struct pmfs_sb_info *)sb->s_fs_info;
+
+	return sbi->s_mount_opt & PMFS_MOUNT_IOREMAP_WC;
+}
+
 void *pmfs_ioremap(struct super_block *sb, phys_addr_t phys_addr, ssize_t size)
 {
 	void __iomem *retval;
-	int protect, hugeioremap;
+	int protect, hugeioremap, patwc;
 
 	if (sb) {
 		protect = pmfs_is_wprotected(sb);
 		hugeioremap = pmfs_has_huge_ioremap(sb);
+		patwc = pmfs_is_pat_wc(sb);
 	} else {
 		protect = 0;
 		hugeioremap = 1;
+		patwc = 0;
 	}
 
 	/*
@@ -121,9 +130,19 @@ void *pmfs_ioremap(struct super_block *sb, phys_addr_t phys_addr, ssize_t size)
 			retval = ioremap_cache_ro(phys_addr, size);
 	} else {
 		if (hugeioremap)
-			retval = ioremap_hpage_cache(phys_addr, size);
+			if(patwc) {
+				pmfs_info("Using ioremap_hpage_wc\n");
+				retval = ioremap_hpage_wc(phys_addr, size);
+			}
+			else
+				retval = ioremap_hpage_cache(phys_addr, size);
 		else
-			retval = ioremap_cache(phys_addr, size);
+			if(patwc) {
+				pmfs_info("Using ioremap_wc\n");
+				retval = ioremap_wc(phys_addr, size);
+			}
+			else
+				retval = ioremap_cache(phys_addr, size);
 	}
 
 fail:
@@ -154,6 +173,7 @@ enum {
 	Opt_num_inodes, Opt_mode, Opt_uid,
 	Opt_gid, Opt_blocksize, Opt_wprotect, Opt_wprotectold,
 	Opt_err_cont, Opt_err_panic, Opt_err_ro,
+	Opt_pat_wc,
 	Opt_hugemmap, Opt_nohugeioremap, Opt_dbgmask, Opt_err
 };
 
@@ -171,6 +191,7 @@ static const match_table_t tokens = {
 	{ Opt_err_cont,	     "errors=continue"	  },
 	{ Opt_err_panic,     "errors=panic"	  },
 	{ Opt_err_ro,	     "errors=remount-ro"  },
+	{ Opt_pat_wc,	     "pat=wc"  },
 	{ Opt_hugemmap,	     "hugemmap"		  },
 	{ Opt_nohugeioremap, "nohugeioremap"	  },
 	{ Opt_dbgmask,	     "dbgmask=%u"	  },
@@ -293,6 +314,10 @@ static int pmfs_parse_options(char *options, struct pmfs_sb_info *sbi,
 			clear_opt(sbi->s_mount_opt, ERRORS_RO);
 			clear_opt(sbi->s_mount_opt, ERRORS_PANIC);
 			set_opt(sbi->s_mount_opt, ERRORS_CONT);
+			break;
+		case Opt_pat_wc:
+			set_opt(sbi->s_mount_opt, IOREMAP_WC);
+			pmfs_info("PMFS: Enabling PAT WC mode");
 			break;
 		case Opt_wprotect:
 			if (remount)
@@ -666,6 +691,7 @@ static int pmfs_fill_super(struct super_block *sb, void *data, int silent)
 	sbi->gid = current_fsgid();
 	set_opt(sbi->s_mount_opt, XIP);
 	clear_opt(sbi->s_mount_opt, PROTECT);
+	clear_opt(sbi->s_mount_opt, IOREMAP_WC);
 	set_opt(sbi->s_mount_opt, HUGEIOREMAP);
 
 	INIT_LIST_HEAD(&sbi->s_truncate);
@@ -675,6 +701,11 @@ static int pmfs_fill_super(struct super_block *sb, void *data, int silent)
 
 	if (pmfs_parse_options(data, sbi, 0))
 		goto out;
+
+	if(test_opt(sb, IOREMAP_WC) && test_opt(sb, PROTECT)) {
+		printk(KERN_ERR "pat_wc does not work with protect");
+		goto out;
+	}
 
 	set_opt(sbi->s_mount_opt, MOUNTING);
 	initsize = sbi->initsize;

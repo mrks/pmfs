@@ -258,6 +258,16 @@ void __iomem *ioremap_wc(resource_size_t phys_addr, unsigned long size)
 }
 EXPORT_SYMBOL(ioremap_wc);
 
+void __iomem *ioremap_hpage_wc(resource_size_t phys_addr, unsigned long size)
+{
+	if (pat_enabled)
+		return ___ioremap_caller(phys_addr, size, _PAGE_CACHE_WC,
+					__builtin_return_address(0), 1, 0);
+	else
+		return ioremap_nocache(phys_addr, size);
+}
+EXPORT_SYMBOL(ioremap_hpage_wc);
+
 void __iomem *
 ioremap_hpage_cache(resource_size_t phys_addr, unsigned long size)
 {
